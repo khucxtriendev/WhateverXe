@@ -8955,7 +8955,8 @@ bool XE::wrapDisplay13FramebufferStart(IOService *that,IOService *provider) {
         if(!ready)return false;
     }
     if((board.selected()&0x78) && (!s->display13FBTCHooksReady || !s->display13TCProbeReady)) {
-        IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);return false;
+        IORegistryEntry::getRegistryRoot()->setProperty("ADLPFBTCUnavailable",true);
+        if(!s->adlnOutputWiring.panel) return false;
     }
  const auto contract=XELP::DisplayContract::display13(s->display13Available(),s->adlnOutputWiring.dp!=0,s->adlnOutputWiring.panel!=0);
  const bool ready=s->display13FramebufferRequested && s->display13BootReady && s->tglActive &&
@@ -9714,7 +9715,17 @@ uint64_t XE::wrapAlderLakeNClockProbe(IOService *controller) {return adlnClockRe
 bool XE::display13OnlyPipeAFramebuffer() {
 	auto &c=display13FBPower;if(!c.lock)return false;
 	IOLockLock(c.lock);
-	const bool only=c.pipe[0].memoryFramebuffer && !c.pipe[1].memoryFramebuffer && !c.pipe[2].memoryFramebuffer;
+	bool secondaryActive=false;
+	if(c.map) {
+		Display13FBPowerIO powerIO {c.map};const auto wells=powerIO.read(Display13Power::Driver);
+		if(wells!=UINT32_MAX && (wells&3)==3 && !(wells&(1U<<16))) {
+			for(unsigned pipe=1;pipe<3;++pipe) if(wells&(1U<<(2*(5+pipe)))) {
+				const auto trans=powerIO.read(0x60400+pipe*0x1000),conf=powerIO.read(0x70008+pipe*0x1000);
+				if((trans!=UINT32_MAX && conf!=UINT32_MAX) && ((trans|conf)&(1U<<31))) secondaryActive=true;
+			}
+		}
+	}
+	const bool only=c.pipe[0].memoryFramebuffer && (!secondaryActive || (!c.pipe[1].memoryFramebuffer && !c.pipe[2].memoryFramebuffer));
 	IOLockUnlock(c.lock);return only;
 }
 void XE::wrapAlderLakeNClockSet(IOService *controller,uint64_t nativeHz) {

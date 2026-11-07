@@ -419,7 +419,7 @@ template<class IO> Readout inspect(IO &io,const void *controller,size_t controll
         const auto geometry=XELPGeometry::linear(r.control,r.stride,r.size,position,offset);
         const bool source=dsi ? !(io.read(0x60400)&(1U<<31)) && XELPGeometry::timing(geometry,dsi->htotal,dsi->vtotal) :
             (dpt&(1U<<30)) && ((trans>>27)&15)==expectedDDI+1 &&
-            (dp ? ((trans>>24)&7)==2 : ((trans>>24)&7)<=1) && !((trans>>20)&7);
+            (dp ? ((trans>>24)&7)==2 : ((trans>>24)&7)<=1) && (!((trans>>20)&7) || ((trans>>20)&7)==2);
         if (dpt==UINT32_MAX || !source || !(trans&(1U<<31)) || (conf&0xC0000000)!=0xC0000000 ||
             !geometry.valid ||
             position || offset || (r.surface&4095) ||

@@ -24,6 +24,7 @@ Sequoia and Tahoe accept compatible updates within their OS family. Future Apple
 - Alder Lake-N: 16- and 24-EU configurations.
 - Twin Lake: 32-EU configurations.
 - Alder Lake-H: 96-EU configurations, including single-channel operation.
+  - **Lenovo ThinkPad P1 Gen 5** (i7-12800H, Iris Xe `8086:46A6`, internal 2560x1600 BOE `NE160QDM-NY1` eDP panel with full QE/CI Metal hardware acceleration on macOS Sequoia).
 - Alder Lake-S: UHD Graphics 770.
 
 See [tested features and known issues](#tested-features-and-known-issues) for OS coverage and display configurations. PCI IDs are listed in [device selection](docs/device-selection.md).
@@ -117,6 +118,54 @@ MIPI DSI support is **experimental and tested only on GPD MicroPC 2 and CHUWI Mi
 - Implement Raptor Lake-U display-clock support.
 - Complete DisplayPort, USB-C and internal-display support on Alder Lake-N / Twin Lake and Alder Lake-H/P/U / Raptor Lake-H/P.
 - Improve display reconnection reliability and investigate full system sleep/wake.
+
+## Lenovo ThinkPad P1 Gen 5 & Alder Lake-H Internal eDP Patch
+
+This repository contains hardware-tested modifications specifically supporting **Lenovo ThinkPad P1 Gen 5** (and other Alder Lake-H/P laptops featuring high-resolution eDP panels and complex Type-C/Thunderbolt wiring).
+
+### Target Specification
+* **Machine:** Lenovo ThinkPad P1 Gen 5 (Type `21DDS88B00`)
+* **Processor:** Intel Core i7-12800H (Alder Lake-H, Display 13, 6 P-Cores + 8 E-Cores)
+* **Integrated GPU:** Intel Iris Xe Graphics (`8086:46A6`, 96 EU)
+* **Discrete GPU:** NVIDIA RTX A1000 Laptop (`10DE:25B9`)
+* **Internal Panel:** BOE `NE160QDM-NY1` / `LEN41B0` (16.0", 16:10, 2560x1600 eDP, 6-bpc GOP initialization)
+* **Target OS:** macOS Sequoia 15.8.x (`24H232`) / macOS Tahoe
+
+### Summary of Patches
+
+1. **6-bpc (`bpc == 2`) GOP Support** (`WhateverXe/kern_alderlake_n.hpp`, `WhateverXe/kern_display13_boot.hpp`, `WhateverXe/kern_display13_fb_memory.hpp`):
+   * Lenovo UEFI GOP sets `(trans >> 20) & 7 = 2` (6 bits per color / 18-bit dithering, register `0x8a200106`).
+   * Upstream required `(trans >> 20) & 7 == 0` (8-bpc), rejecting the boot buffer with `InvalidDPSource (0x0B)` and freezing verbose boot.
+   * Patch relaxes the check to `((bpc == 0 || bpc == 2) && ...)` in `dpSource`, `linearPlan`, `normalize`, and `inspect`.
+
+2. **Panel Preservation on `ADLPFBTCUnavailable`** (`WhateverXe/kern_xe.cpp` line 8959):
+   * When external Type-C / Thunderbolt controller probes are unready during early boot, upstream aborted the entire framebuffer.
+   * Patch adds `if (!s->adlnOutputWiring.panel) return false;`, allowing internal eDP initialization to proceed regardless of external Type-C probe status.
+
+3. **Hardware Pipe Status Check in `display13OnlyPipeAFramebuffer()`** (`WhateverXe/kern_xe.cpp` line 9715):
+   * Resolves the critical "screen blackout at WindowServer handoff" issue.
+   * Upstream relied on software state (`pipe[1].memoryFramebuffer`), erroneously assuming dual-head mode and calling `adlnSetDualClock()` / `tryCloseGate()`, which cut power and pixel clock to Pipe A.
+   * Patch directly queries physical hardware registers (`Display13Power::Driver`, `TRANS_CONF`, `PIPE_CONF`) to verify inactive secondary pipes and preserves Pipe A clock.
+
+4. **256-Byte EDID (DisplayID 1.3 Block 2)**:
+   * Requires complete 256-byte EDID under OpenCore `DeviceProperties` (`AAPL00,override-no-connect`, `AAPL,override-no-connect`, and `edid`). Without Block 2, CoreDisplay falls back to 1280x1024 VESA mode, causing Y-tiled 16-column slicing artifacts.
+
+### Upstream Maintenance & Patch File
+
+All modifications are captured in [`whateverxe_thinkpad_p1_gen5.patch`](whateverxe_thinkpad_p1_gen5.patch). To update from newer upstream commits:
+
+```sh
+# Pull latest changes from upstream repository
+git pull upstream acer/current
+
+# Apply the ThinkPad patch
+git apply whateverxe_thinkpad_p1_gen5.patch
+
+# Or run the included helper:
+bash update_and_rebuild.sh
+```
+
+---
 
 ## Build and test
 
